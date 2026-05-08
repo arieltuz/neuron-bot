@@ -73,7 +73,11 @@ async def get_texto(update: Update):
             return texto
         except Exception as e:
             logger.error(f"Error transcripción: {e}")
-            await msg.reply_text("⚠️ No pude entender el audio. Intentá de nuevo o escribí el texto.")
+            error_str = str(e)[:200]
+            await msg.reply_text(
+                f"⚠️ Error al transcribir el audio:\n`{error_str}`\n\nProbá escribir el texto.",
+                parse_mode="Markdown"
+            )
             return None
     return msg.text.strip() if msg.text else None
 
@@ -368,7 +372,7 @@ def main():
             COMP_CONFIRMAR:      [MessageHandler(voz_o_texto & ~filters.COMMAND, comp_confirmar)],
         },
         fallbacks=[CommandHandler("cancelar", cancelar)],
-        allow_reentry=True,
+        allow_reentry=False,
     )
     app.add_handler(conv)
     app.add_handler(CommandHandler("ayuda", ayuda))
