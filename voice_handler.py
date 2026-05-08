@@ -19,28 +19,43 @@ OPENAI_API_KEY = os.environ.get(
 
 async def transcribir_audio(file_bytes: bytes, extension: str = "ogg") -> str:
     """Transcribe audio con Whisper API usando requests directamente."""
+    logger.info(f"Iniciando transcripción - bytes: {len(file_bytes)}, ext: {extension}")
+    logger.info(f"API key presente: {bool(OPENAI_API_KEY)}, primeros 10 chars: {OPENAI_API_KEY[:10] if OPENAI_API_KEY else 'NONE'}")
+
     with tempfile.NamedTemporaryFile(suffix=f".{extension}", delete=False) as tmp:
         tmp.write(file_bytes)
         tmp_path = tmp.name
+        logger.info(f"Audio guardado en: {tmp_path}")
 
     try:
         with open(tmp_path, "rb") as audio_file:
+            logger.info("Enviando request a OpenAI...")
             response = requests.post(
                 "https://api.openai.com/v1/audio/transcriptions",
                 headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
                 files={"file": (f"audio.{extension}", audio_file, "audio/ogg")},
                 data={"model": "whisper-1", "language": "es"},
-                timeout=30,
+                timeout=60,
             )
-        response.raise_for_status()
+        logger.info(f"Respuesta OpenAI - status: {response.status_code}")
+        logger.info(f"Respuesta body: {response.text[:500]}")
+
+        if response.status_code != 200:
+            error_msg = f"Error OpenAI {response.status_code}: {response.text}"
+            logger.error(error_msg)
+            raise Exception(error_msg)
+
         texto = response.json().get("text", "").strip()
-        logger.info(f"Transcripción: {texto}")
+        logger.info(f"Transcripción exitosa: {texto}")
         return texto
     except Exception as e:
-        logger.error(f"Error transcribiendo audio: {e}")
+        logger.error(f"Error transcribiendo audio: {type(e).__name__}: {e}")
         raise
     finally:
-        os.unlink(tmp_path)
+        try:
+            os.unlink(tmp_path)
+        except:
+            pass
 
 
 def extraer_numero(texto: str) -> Optional[float]:
