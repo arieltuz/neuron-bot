@@ -1,9 +1,10 @@
 """
 Generador de PDFs - Neuron Computación
-Presupuestos y Comprobantes X
+Presupuestos (precios finales, sin desglose IVA), Comprobantes X y Facturas A/B
 """
 
 import io
+import base64
 from datetime import datetime, timedelta
 from pathlib import Path
 from reportlab.lib.pagesizes import A4
@@ -13,7 +14,7 @@ from reportlab.platypus import (
     SimpleDocTemplate, Table, TableStyle,
     Paragraph, Spacer, Image as RLImage, HRFlowable
 )
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 
 # ── Rutas ─────────────────────────────────────────────────────────────────────
@@ -37,7 +38,6 @@ BLUE  = colors.HexColor("#1a6fbf")
 LGRAY = colors.HexColor("#f5f5f5")
 MGRAY = colors.HexColor("#cccccc")
 
-# ── Estilos comunes ───────────────────────────────────────────────────────────
 def _styles():
     return {
         "label":   ParagraphStyle("label",  fontSize=8,  textColor=colors.grey,   fontName="Helvetica"),
@@ -62,8 +62,6 @@ def _header(s: dict) -> Table:
     """Encabezado con logo + datos del local."""
     logo = RLImage(str(LOGO_PATH), width=7*cm, height=1.32*cm)
     info = [
-        Paragraph(f"<b>{LOCAL['nombre']}</b>",
-                  ParagraphStyle("lh", fontSize=11, textColor=DARK, fontName="Helvetica-Bold", alignment=TA_RIGHT)),
         Paragraph(LOCAL["direccion"],
                   ParagraphStyle("ls", fontSize=8, textColor=colors.grey, fontName="Helvetica", alignment=TA_RIGHT)),
         Paragraph(f"CUIT: {LOCAL['cuit']} | {LOCAL['iva']}",
@@ -128,7 +126,7 @@ def _tabla_datos_cliente(s: dict, **kv) -> Table:
     return t
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PRESUPUESTO
+# PRESUPUESTO (precios finales, sin desglose de IVA)
 # ══════════════════════════════════════════════════════════════════════════════
 def generar_presupuesto_pdf(
     numero: str,
@@ -186,21 +184,17 @@ def generar_presupuesto_pdf(
     story.append(_tabla_items(items, s))
     story.append(Spacer(1, 0.3*cm))
 
-    # Totales
-    subtotal = sum(it["qty"] * it["precio"] for it in items)
-    iva      = subtotal * 0.21
-    total    = subtotal + iva
-
+    # TOTAL (sin desglose de IVA — precios finales)
+    total = sum(it["qty"] * it["precio"] for it in items)
     totales = [
-        ["", "", Paragraph("Subtotal:", s["label"]),  Paragraph(fmt_pesos(subtotal), s["value"])],
-        ["", "", Paragraph("IVA (21%):", s["label"]), Paragraph(fmt_pesos(iva),      s["value"])],
-        ["", "", Paragraph("TOTAL:",     s["total"]),  Paragraph(fmt_pesos(total),    s["total_r"])],
+        ["", "", Paragraph("TOTAL:", s["total"]),
+                  Paragraph(fmt_pesos(total), s["total_r"])],
     ]
     tot = Table(totales, colWidths=[1.5*cm, 11*cm, 3.2*cm, 2.8*cm])
     tot.setStyle(TableStyle([
         ("ALIGN",      (2, 0), (3, -1), "RIGHT"),
-        ("LINEABOVE",  (2, 2), (3, 2),  1, BLUE),
-        ("TOPPADDING", (0, 0), (-1,-1), 3),
+        ("LINEABOVE",  (2, 0), (3, 0),  1, BLUE),
+        ("TOPPADDING", (0, 0), (-1,-1), 4),
     ]))
     story.append(tot)
     story.append(Spacer(1, 0.4*cm))
@@ -221,7 +215,7 @@ def generar_presupuesto_pdf(
     story.append(Spacer(1, 1*cm))
     story.append(HRFlowable(width="100%", thickness=1, color=BLUE, spaceAfter=4))
     story.append(Paragraph(
-        f"{LOCAL['nombre']} | {LOCAL['direccion']} | Tel: {LOCAL['tel']} | {LOCAL['email']}",
+        f"{LOCAL['direccion']} | Tel: {LOCAL['tel']} | {LOCAL['email']}",
         s["footer"]
     ))
 
@@ -230,7 +224,7 @@ def generar_presupuesto_pdf(
     return buf.getvalue()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# COMPROBANTE X
+# COMPROBANTE X (sin cambios — total directo sin IVA)
 # ══════════════════════════════════════════════════════════════════════════════
 def generar_comprobante_x_pdf(
     numero: str,
@@ -308,7 +302,7 @@ def generar_comprobante_x_pdf(
     story.append(_tabla_items(items, s))
     story.append(Spacer(1, 0.3*cm))
 
-    # Total (Comprobante X no discrimina IVA)
+    # Total
     total = sum(it["qty"] * it["precio"] for it in items)
     tot_rows = [
         ["", "", Paragraph("TOTAL:", s["total"]), Paragraph(fmt_pesos(total), s["total_r"])],
@@ -335,22 +329,33 @@ def generar_comprobante_x_pdf(
     ))
 
     # Firma
-    story.append(Spacer(1, 1.5*cm))
-    firma = Table([[
-        "",
-        Table(
+    story.append(Spacer(1, 1*cm))
+    FIRMA_PATH = BASE_DIR / "firma_mario.png"
+    if FIRMA_PATH.exists():
+        firma_img = RLImage(str(FIRMA_PATH), width=2.5*cm, height=2.7*cm)
+        firma_inner = Table(
+            [[firma_img],
+             [Paragraph("_" * 30, s["normal"])],
+             [Paragraph("Mario A. Carabajal", ParagraphStyle("fc", fontSize=9, alignment=TA_CENTER, fontName="Helvetica"))]],
+            colWidths=[6*cm], rowHeights=[2.7*cm, 0.2*cm, 0.4*cm]
+        )
+        firma_inner.setStyle(TableStyle([("ALIGN", (0,0), (-1,-1), "CENTER")]))
+        firma = Table([["", firma_inner, ""]], colWidths=[6.25*cm, 6*cm, 6.25*cm])
+        firma.setStyle(TableStyle([("VALIGN", (0,0), (-1,-1), "BOTTOM")]))
+    else:
+        firma_inner = Table(
             [[Paragraph("_" * 30, s["normal"])],
-             [Paragraph(LOCAL["titular"], ParagraphStyle("fc", fontSize=9, alignment=TA_CENTER, fontName="Helvetica"))]],
+             [Paragraph("Mario A. Carabajal", ParagraphStyle("fc", fontSize=9, alignment=TA_CENTER, fontName="Helvetica"))]],
             colWidths=[6*cm]
         )
-    ]], colWidths=[12.5*cm, 6*cm])
+        firma = Table([["", firma_inner, ""]], colWidths=[6.25*cm, 6*cm, 6.25*cm])
     story.append(firma)
 
     # Pie
     story.append(Spacer(1, 0.8*cm))
     story.append(HRFlowable(width="100%", thickness=1, color=BLUE, spaceAfter=4))
     story.append(Paragraph(
-        f"{LOCAL['nombre']} | {LOCAL['direccion']} | Tel: {LOCAL['tel']} | {LOCAL['email']}",
+        f"{LOCAL['direccion']} | Tel: {LOCAL['tel']} | {LOCAL['email']}",
         s["footer"]
     ))
 
