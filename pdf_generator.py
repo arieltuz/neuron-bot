@@ -362,3 +362,144 @@ def generar_comprobante_x_pdf(
     doc.build(story)
     buf.seek(0)
     return buf.getvalue()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FACTURA ELECTRÓNICA (con CAE de ARCA)
+# ══════════════════════════════════════════════════════════════════════════════
+def generar_factura_pdf(
+    tipo: str, numero: int, punto_venta: int,
+    cae: str, vencimiento_cae: str, fecha: str,
+    cliente_nombre: str, cliente_doc_tipo: int, cliente_doc_nro: int,
+    cliente_cond_iva: str, items: list, qr_b64: str,
+    homologacion: bool = False,
+) -> bytes:
+    """Genera PDF de Factura Electrónica con CAE y QR oficial de ARCA."""
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+        leftMargin=1.5*cm, rightMargin=1.5*cm, topMargin=1.2*cm, bottomMargin=1.5*cm)
+    s = _styles()
+    story = []
+
+    fecha_fmt = f"{fecha[6:8]}/{fecha[4:6]}/{fecha[:4]}"
+    venc_fmt  = f"{vencimiento_cae[6:8]}/{vencimiento_cae[4:6]}/{vencimiento_cae[:4]}"
+    doc_tipo_str = {80: "CUIT", 96: "DNI", 99: "Consumidor Final"}.get(cliente_doc_tipo, "Doc")
+
+    logo = RLImage(str(LOGO_PATH), width=6*cm, height=1.13*cm)
+    letra_p = Paragraph(f"<b>{tipo}</b>", ParagraphStyle("letra", fontSize=42, fontName="Helvetica-Bold", alignment=TA_CENTER, textColor=DARK))
+    cod_comp = "001" if tipo == "A" else "006"
+    cod_p = Paragraph(f"COD. {cod_comp}", ParagraphStyle("cod", fontSize=8, alignment=TA_CENTER, textColor=colors.grey))
+    letra_table = Table([[letra_p],[cod_p]], colWidths=[2.5*cm], rowHeights=[1.5*cm,0.5*cm])
+    letra_table.setStyle(TableStyle([("BOX",(0,0),(-1,-1),2,DARK),("ALIGN",(0,0),(-1,-1),"CENTER"),("VALIGN",(0,0),(-1,-1),"MIDDLE")]))
+
+    info_emisor = [
+        Paragraph(LOCAL["direccion"], ParagraphStyle("e2", fontSize=8, fontName="Helvetica", textColor=colors.grey, alignment=TA_RIGHT)),
+        Paragraph(f"CUIT: {LOCAL['cuit']}", ParagraphStyle("e2", fontSize=8, fontName="Helvetica", textColor=colors.grey, alignment=TA_RIGHT)),
+        Paragraph(LOCAL["iva"], ParagraphStyle("e2", fontSize=8, fontName="Helvetica", textColor=colors.grey, alignment=TA_RIGHT)),
+        Paragraph(f"Tel: {LOCAL['tel']}", ParagraphStyle("e2", fontSize=8, fontName="Helvetica", textColor=colors.grey, alignment=TA_RIGHT)),
+    ]
+    header = Table([[logo, letra_table, info_emisor]], colWidths=[6.5*cm, 3*cm, 9*cm])
+    header.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ALIGN",(0,0),(0,0),"LEFT"),("ALIGN",(1,0),(1,0),"CENTER"),("ALIGN",(2,0),(2,0),"RIGHT")]))
+    story.append(header)
+    story.append(Spacer(1, 0.2*cm))
+    story.append(HRFlowable(width="100%", thickness=2, color=BLUE, spaceAfter=6))
+
+    titulo = "FACTURA" + (" (HOMOLOGACIÓN - SIN VALIDEZ FISCAL)" if homologacion else "")
+    story.append(Paragraph(titulo, ParagraphStyle("t", fontSize=14, fontName="Helvetica-Bold",
+        textColor=BLUE if not homologacion else colors.red, alignment=TA_CENTER)))
+    story.append(Spacer(1, 0.3*cm))
+
+    nro_str = f"{punto_venta:05d}-{numero:08d}"
+    meta = Table([[Paragraph("Comprobante N°:", s["label"]), Paragraph(nro_str, s["value"]),
+                   Paragraph("Fecha:", s["label"]), Paragraph(fecha_fmt, s["value"])]],
+                 colWidths=[3.5*cm, 5*cm, 2*cm, 6*cm])
+    meta.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"MIDDLE")]))
+    story.append(meta)
+    story.append(Spacer(1, 0.4*cm))
+
+    story.append(HRFlowable(width="100%", thickness=0.5, color=MGRAY, spaceAfter=4))
+    story.append(Paragraph("DATOS DEL CLIENTE", s["section"]))
+    story.append(Spacer(1, 0.2*cm))
+    cliente_doc_str = str(cliente_doc_nro) if cliente_doc_nro else "-"
+    cd = Table([
+        [Paragraph("Cliente:", s["label"]), Paragraph(cliente_nombre or "Consumidor Final", s["value"]),
+         Paragraph(f"{doc_tipo_str}:", s["label"]), Paragraph(cliente_doc_str, s["value"])],
+        [Paragraph("Cond. IVA:", s["label"]), Paragraph(cliente_cond_iva, s["value"]), "", ""],
+    ], colWidths=[3.5*cm, 5*cm, 3*cm, 6*cm])
+    cd.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"MIDDLE")]))
+    story.append(cd)
+    story.append(Spacer(1, 0.4*cm))
+
+    story.append(HRFlowable(width="100%", thickness=0.5, color=MGRAY, spaceAfter=4))
+    story.append(Paragraph("DETALLE", s["section"]))
+    story.append(Spacer(1, 0.2*cm))
+
+    if tipo == "A":
+        rows = [[Paragraph("Cant.", s["th_c"]), Paragraph("Descripción", s["th"]),
+                 Paragraph("P.Unit.", s["th_r"]), Paragraph("IVA%", s["th_c"]), Paragraph("Subtotal", s["th_r"])]]
+        for it in items:
+            qty = it["qty"]; qty_str = str(int(qty)) if qty==int(qty) else str(qty)
+            rows.append([
+                Paragraph(qty_str, ParagraphStyle("c",fontSize=9,alignment=TA_CENTER)),
+                Paragraph(it["desc"], ParagraphStyle("n",fontSize=9)),
+                Paragraph(fmt_pesos(it["precio"]), ParagraphStyle("r",fontSize=9,alignment=TA_RIGHT)),
+                Paragraph(f"{it.get('alicuota_iva',21)}%", ParagraphStyle("c",fontSize=9,alignment=TA_CENTER)),
+                Paragraph(fmt_pesos(qty*it["precio"]), ParagraphStyle("r",fontSize=9,alignment=TA_RIGHT)),
+            ])
+        cw = [1.5*cm, 9*cm, 2.5*cm, 1.8*cm, 3.7*cm]
+    else:
+        rows = [[Paragraph("Cant.", s["th_c"]), Paragraph("Descripción", s["th"]),
+                 Paragraph("P.Unit.", s["th_r"]), Paragraph("Subtotal", s["th_r"])]]
+        for it in items:
+            qty = it["qty"]; qty_str = str(int(qty)) if qty==int(qty) else str(qty)
+            rows.append([
+                Paragraph(qty_str, ParagraphStyle("c",fontSize=9,alignment=TA_CENTER)),
+                Paragraph(it["desc"], ParagraphStyle("n",fontSize=9)),
+                Paragraph(fmt_pesos(it["precio"]), ParagraphStyle("r",fontSize=9,alignment=TA_RIGHT)),
+                Paragraph(fmt_pesos(qty*it["precio"]), ParagraphStyle("r",fontSize=9,alignment=TA_RIGHT)),
+            ])
+        cw = [1.5*cm, 11*cm, 3.2*cm, 2.8*cm]
+
+    it_table = Table(rows, colWidths=cw)
+    it_table.setStyle(TableStyle([
+        ("BACKGROUND",(0,0),(-1,0),DARK),("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,LGRAY]),
+        ("GRID",(0,0),(-1,-1),0.3,MGRAY),("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+        ("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5)]))
+    story.append(it_table)
+    story.append(Spacer(1, 0.3*cm))
+
+    if tipo == "A":
+        neto = sum(it["qty"]*it["precio"] for it in items)
+        iva  = sum(it["qty"]*it["precio"]*(it.get("alicuota_iva",21)/100) for it in items)
+        total = neto + iva
+        tot_rows = [
+            ["","",Paragraph("Subtotal:", s["label"]), Paragraph(fmt_pesos(round(neto,2)), s["value"])],
+            ["","",Paragraph("IVA:", s["label"]), Paragraph(fmt_pesos(round(iva,2)), s["value"])],
+            ["","",Paragraph("TOTAL:", s["total"]), Paragraph(fmt_pesos(round(total,2)), s["total_r"])],
+        ]
+    else:
+        total = sum(it["qty"]*it["precio"] for it in items)
+        tot_rows = [["","",Paragraph("TOTAL:", s["total"]), Paragraph(fmt_pesos(round(total,2)), s["total_r"])]]
+    tot = Table(tot_rows, colWidths=[1.5*cm, 11*cm, 3.2*cm, 2.8*cm])
+    tot.setStyle(TableStyle([("ALIGN",(2,0),(3,-1),"RIGHT"),("LINEABOVE",(2,-1),(3,-1),1,BLUE),("TOPPADDING",(0,0),(-1,-1),3)]))
+    story.append(tot)
+    story.append(Spacer(1, 0.4*cm))
+
+    story.append(HRFlowable(width="100%", thickness=1, color=DARK, spaceAfter=6))
+    qr_img = RLImage(io.BytesIO(base64.b64decode(qr_b64)), width=3.2*cm, height=3.2*cm)
+    cae_info = [
+        Paragraph(f"<b>CAE N°:</b> {cae}", ParagraphStyle("cae", fontSize=10, fontName="Helvetica-Bold")),
+        Paragraph(f"<b>Vencimiento CAE:</b> {venc_fmt}", ParagraphStyle("cae", fontSize=10, fontName="Helvetica-Bold")),
+        Spacer(1, 0.2*cm),
+        Paragraph("Comprobante autorizado por ARCA (ex-AFIP)", ParagraphStyle("note", fontSize=8, textColor=colors.grey)),
+    ]
+    footer = Table([[qr_img, cae_info]], colWidths=[3.5*cm, 15*cm])
+    footer.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ALIGN",(0,0),(0,0),"LEFT")]))
+    story.append(footer)
+    story.append(Spacer(1, 0.5*cm))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=BLUE, spaceAfter=4))
+    story.append(Paragraph(f"{LOCAL['direccion']} | Tel: {LOCAL['tel']} | {LOCAL['email']}", s["footer"]))
+
+    doc.build(story)
+    buf.seek(0)
+    return buf.getvalue()
