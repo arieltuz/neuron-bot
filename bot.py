@@ -417,7 +417,9 @@ async def conv_tipo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return await cancelar(update, ctx)
 
     datos = ctx.user_data["conv_datos"]
+    numero_presupuesto = ctx.user_data["conv_numero"]
 
+    # COMPROBANTE X — generar directamente sin pedir datos
     if "comprobante" in texto.lower() or "🧾 comprobante" in texto.lower():
         numero = next_number("comprobante")
         await update.message.reply_text("⏳ Generando Comprobante X...", reply_markup=ReplyKeyboardRemove())
@@ -431,12 +433,12 @@ async def conv_tipo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_document(
             document=io.BytesIO(pdf_bytes),
             filename=f"ComprobanteX_{numero}_NeuronComputacion.pdf",
-            caption=f"✅ *Comprobante X N° {numero}* generado a partir del Presupuesto N° {ctx.user_data['conv_numero']}.",
+            caption=f"✅ *Comprobante X N° {numero}* generado a partir del Presupuesto N° {numero_presupuesto}.",
             parse_mode="Markdown", reply_markup=teclado_menu())
         ctx.user_data.clear()
         return ConversationHandler.END
 
-    # Factura A o B
+    # FACTURA A/B — pre-cargar datos del presupuesto, saltar a resumen
     if "a" in texto.lower().replace("factura","").replace("🅰️","a")[:3] and "🅰" in texto or "factura a" in texto.lower():
         tipo_fac = "A"
     elif "🅱" in texto or "factura b" in texto.lower():
@@ -444,21 +446,31 @@ async def conv_tipo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     else:
         tipo_fac = "B"
 
-    # Pasar los datos al flujo de factura
+    from arca_handler import detectar_tipo_doc
+    doc_tipo, doc_nro = detectar_tipo_doc(datos.get("cliente_dni", "-"))
+
     ctx.user_data.clear()
     ctx.user_data["items"] = datos["items"]
     ctx.user_data["fac_tipo"] = tipo_fac
     ctx.user_data["cliente_nombre"] = datos.get("cliente_nombre","-")
-    # Agregar alícuota por defecto a los ítems (21%)
+    ctx.user_data["cliente_doc_tipo"] = doc_tipo
+    ctx.user_data["cliente_doc_nro"] = doc_nro
+    ctx.user_data["conv_numero"] = numero_presupuesto
+
     for it in ctx.user_data["items"]:
         if "alicuota_iva" not in it:
             it["alicuota_iva"] = 21.0
-    await update.message.reply_text(
-        f"🧾 Factura *{tipo_fac}* desde Presupuesto N° {ctx.user_data.get('conv_numero','')}\n\n"
-        "Para emitir en ARCA necesito el documento del cliente.\n\n"
-        "✏️ *CUIT* (Factura A) o *DNI/CUIT* (Factura B):",
-        parse_mode="Markdown", reply_markup=ReplyKeyboardRemove())
-    return FAC_CLIENTE_DOC
+
+    if tipo_fac == "A":
+        cond = "IVA Responsable Inscripto"
+    elif doc_tipo == 80:
+        cond = "Monotributista / Exento"
+    else:
+        cond = "Consumidor Final"
+    ctx.user_data["cliente_cond_iva"] = cond
+
+    # Ir DIRECTAMENTE al resumen (sin pedir datos)
+    return await _factura_resumen(update, ctx)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FACTURA ELECTRÓNICA (ARCA)
