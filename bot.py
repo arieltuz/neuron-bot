@@ -419,58 +419,49 @@ async def conv_tipo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     datos = ctx.user_data["conv_datos"]
     numero_presupuesto = ctx.user_data["conv_numero"]
 
-    # COMPROBANTE X — generar directamente sin pedir datos
-    if "comprobante" in texto.lower() or "🧾 comprobante" in texto.lower():
+    if "comprobante" in texto.lower() or "🧾" in texto:
         numero = next_number("comprobante")
         await update.message.reply_text("⏳ Generando Comprobante X...", reply_markup=ReplyKeyboardRemove())
-        pdf_bytes = generar_comprobante_x_pdf(
-            numero=numero,
-            cliente_nombre=datos.get("cliente_nombre","-"),
-            cliente_cuit=datos.get("cliente_dni","-"),
-            cliente_tel=datos.get("cliente_tel","-"),
-            items=datos["items"],
-            notas=datos.get("notas",""))
-        await update.message.reply_document(
-            document=io.BytesIO(pdf_bytes),
+        pdf_bytes = generar_comprobante_x_pdf(numero=numero, cliente_nombre=datos.get("cliente_nombre","-"),
+            cliente_cuit=datos.get("cliente_dni","-"), cliente_tel=datos.get("cliente_tel","-"),
+            items=datos["items"], notas=datos.get("notas",""))
+        await update.message.reply_document(document=io.BytesIO(pdf_bytes),
             filename=f"ComprobanteX_{numero}_NeuronComputacion.pdf",
-            caption=f"✅ *Comprobante X N° {numero}* generado a partir del Presupuesto N° {numero_presupuesto}.",
+            caption=f"✅ *Comprobante X N° {numero}* desde Presupuesto N° {numero_presupuesto}.",
             parse_mode="Markdown", reply_markup=teclado_menu())
         ctx.user_data.clear()
         return ConversationHandler.END
 
-    # FACTURA A/B — pre-cargar datos del presupuesto, saltar a resumen
-    if "a" in texto.lower().replace("factura","").replace("🅰️","a")[:3] and "🅰" in texto or "factura a" in texto.lower():
-        tipo_fac = "A"
-    elif "🅱" in texto or "factura b" in texto.lower():
-        tipo_fac = "B"
-    else:
-        tipo_fac = "B"
-
+    tipo_fac = "A" if ("a" in texto.lower() or "🅰" in texto) else "B"
     from arca_handler import detectar_tipo_doc
     doc_tipo, doc_nro = detectar_tipo_doc(datos.get("cliente_dni", "-"))
-
-    ctx.user_data.clear()
+    
     ctx.user_data["items"] = datos["items"]
     ctx.user_data["fac_tipo"] = tipo_fac
     ctx.user_data["cliente_nombre"] = datos.get("cliente_nombre","-")
     ctx.user_data["cliente_doc_tipo"] = doc_tipo
     ctx.user_data["cliente_doc_nro"] = doc_nro
-    ctx.user_data["conv_numero"] = numero_presupuesto
-
     for it in ctx.user_data["items"]:
-        if "alicuota_iva" not in it:
-            it["alicuota_iva"] = 21.0
-
-    if tipo_fac == "A":
-        cond = "IVA Responsable Inscripto"
-    elif doc_tipo == 80:
-        cond = "Monotributista / Exento"
-    else:
-        cond = "Consumidor Final"
-    ctx.user_data["cliente_cond_iva"] = cond
-
-    # Ir DIRECTAMENTE al resumen (sin pedir datos)
-    return await _factura_resumen(update, ctx)
+        if "alicuota_iva" not in it: it["alicuota_iva"] = 21.0
+    ctx.user_data["cliente_cond_iva"] = "IVA Responsable Inscripto" if tipo_fac=="A" else ("Monotributista/Exento" if doc_tipo==80 else "Consumidor Final")
+    
+    items = ctx.user_data["items"]
+    neto = sum(it["qty"]*it["precio"] for it in items) if tipo_fac=="A" else sum(it["qty"]*it["precio"]/(1+it.get("alicuota_iva",21)/100) for it in items)
+    iva = sum(it["qty"]*it["precio"]*(it.get("alicuota_iva",21)/100) for it in items) if tipo_fac=="A" else (sum(it["qty"]*it["precio"] for it in items)-neto)
+    total = neto + iva if tipo_fac=="A" else sum(it["qty"]*it["precio"] for it in items)
+    detalle = "\n".join(f"  • {it['qty']}x {it['desc']} — {fmt_pesos(it['precio'])} ({it.get('alicuota_iva',21)}%)" for it in items)
+    
+    await update.message.reply_text(
+        f"🧾 *Resumen Factura {tipo_fac}* (Presupuesto N° {numero_presupuesto})\n\n"
+        f"👤 {ctx.user_data['cliente_nombre']}\n"
+        f"🪪 {ctx.user_data.get('cliente_doc_nro', '-')}\n"
+        f"📋 {ctx.user_data['cliente_cond_iva']}\n\n"
+        f"*Ítems:*\n{detalle}\n\n"
+        f"Neto: {fmt_pesos(round(neto,2))}\nIVA: {fmt_pesos(round(iva,2))}\n"
+        f"*TOTAL: {fmt_pesos(round(total,2))}*\n\n"
+        "⚠️ Una vez confirmada se emite en ARCA.\n¿Confirmás?",
+        parse_mode="Markdown", reply_markup=teclado_si_no())
+    return FAC_CONFIRMAR
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FACTURA ELECTRÓNICA (ARCA)
