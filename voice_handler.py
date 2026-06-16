@@ -27,7 +27,6 @@ def _cargar_modelo():
         SetLogLevel(-1)
         _descargar_modelo()
         _model = Model(str(MODEL_PATH))
-        logger.info("✅ Modelo Vosk cargado.")
     return _model
 
 def _convertir_a_wav(inp, out):
@@ -53,13 +52,11 @@ async def transcribir_audio(file_bytes: bytes, extension: str = "ogg") -> str:
                     if r.get("text"): res.append(r["text"])
             rf = json.loads(rec.FinalResult())
             if rf.get("text"): res.append(rf["text"])
-        texto = " ".join(res).strip()
-        logger.info(f"Transcripción: {texto}")
-        return texto
+        return " ".join(res).strip()
     finally:
         for p in (tmp_in, tmp_wav):
             try: os.unlink(p)
-            except Exception: pass
+            except: pass
 
 def extraer_numero(texto: str) -> Optional[float]:
     t = texto.replace("$","").replace("pesos","").replace(".","").replace(",",".").strip()

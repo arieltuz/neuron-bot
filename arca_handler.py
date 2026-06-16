@@ -2,7 +2,6 @@
 import os, json, base64, logging, subprocess, tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
 from zeep import Client
 from zeep.helpers import serialize_object
 
@@ -31,17 +30,13 @@ DOC_CUIT = 80; DOC_DNI = 96; DOC_CF = 99
 def _ensure_certs():
     if not KEY_PATH.exists():
         kb = os.environ.get("ARCA_KEY_B64")
-        if kb:
-            with open(KEY_PATH,"wb") as f: f.write(base64.b64decode(kb))
-        else:
-            raise FileNotFoundError("Falta neuron.key / ARCA_KEY_B64")
+        if kb: open(KEY_PATH,"wb").write(base64.b64decode(kb))
+        else: raise FileNotFoundError("Falta neuron.key / ARCA_KEY_B64")
     if not CERT_PATH.exists():
         ev = "ARCA_CERT_HOMO_B64" if HOMOLOGACION else "ARCA_CERT_PROD_B64"
         cb = os.environ.get(ev)
-        if cb:
-            with open(CERT_PATH,"wb") as f: f.write(base64.b64decode(cb))
-        else:
-            raise FileNotFoundError(f"Falta certificado / {ev}")
+        if cb: open(CERT_PATH,"wb").write(base64.b64decode(cb))
+        else: raise FileNotFoundError(f"Falta certificado / {ev}")
 
 def _crear_tra():
     now = datetime.now(timezone.utc)
@@ -81,7 +76,7 @@ def _obtener_ta():
         try:
             if datetime.fromisoformat(ta["expirationTime"]) > datetime.now(timezone.utc)+timedelta(minutes=5):
                 return ta
-        except Exception: pass
+        except: pass
     return _obtener_token_nuevo()
 
 def _auth():
