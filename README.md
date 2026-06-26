@@ -141,7 +141,7 @@ Railway redeploya automáticamente con cada push a `main`.
 ```bash
 openssl genrsa -out neuron.key 2048
 openssl req -new -key neuron.key \
-  -subj "/C=AR/O=Matias H Carabajal/CN=neuron-bot/serialNumber=CUIT XXXXXXXXXXX" \
+  -subj "/C=AR/O=Nombre del Titular/CN=neuron-bot/serialNumber=CUIT XXXXXXXXXXX" \
   -out neuron.csr
 ```
 
