@@ -28,7 +28,9 @@ import db
 logging.basicConfig(format="%(asctime)s | %(levelname)s | %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8362308263:AAGA2gxYn-qCjtxO9rbOhBvTPELl8Yu52ro")
+BOT_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("Falta la variable de entorno TELEGRAM_TOKEN")
 BASE_DIR = Path(__file__).parent
 
 def next_number(tipo): return db.next_number(tipo)
